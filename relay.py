@@ -46,14 +46,43 @@ class IRCBot:
                     numeric_reply = parts[1]
                     if numeric_reply == '001':
                         await self.join_channel()
-                elif len(parts) > 2 and parts[1] == 'PRIVMSG' and parts[2] == self.channel:
-                    nick = parts[0].split('!')[0].lstrip(':')
-                    message = ' '.join(parts[3:]).lstrip(':')
-                    if message.startswith('\x01ACTION'):
+                elif (
+                    len(parts) > 2
+                    and parts[1] == "PRIVMSG"
+                    and parts[2] == self.channel
+                ):
+                    nick = parts[0].split("!")[0].lstrip(":")
+                    valid_colors = [
+                        "02",
+                        "03",
+                        "04",
+                        "05",
+                        "06",
+                        "07",
+                        "08",
+                        "09",
+                        "10",
+                        "11",
+                        "12",
+                        "13",
+                        "14",
+                        "15",
+                    ]
+                    which_color = lambda nick: valid_colors[
+                        sum(ord(c) for c in nick) % len(valid_colors)
+                    ]
+                    color_nick = lambda nick: f"\u0003{which_color(nick)}{nick}\u0003"
+                    colored_nick = color_nick(nick)
+                    message = " ".join(parts[3:]).lstrip(":")
+                    if message.startswith("\x01ACTION"):
                         message = message[8:-1]
-                        relay_message = f"[{self.network_identifier}] * {nick} {message}"
+                        relay_message = (
+                            f"[{self.network_identifier}] * {colored_nick} {message}"
+                        )
                     else:
-                        relay_message = f"[{self.network_identifier}] <{nick}> {message}"
+                        relay_message = (
+                            f"[{self.network_identifier}] <{colored_nick}> {message}"
+                        )
                     if self.relay_bot:
                         await self.relay_bot.send_message(relay_message)
 
