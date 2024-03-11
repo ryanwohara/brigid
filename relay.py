@@ -1,7 +1,18 @@
 import asyncio
+import ssl
+
 
 class IRCBot:
-    def __init__(self, server, port, nickname, channel, network_identifier, relay_bot=None):
+    def __init__(
+        self,
+        server,
+        port,
+        nickname,
+        channel,
+        network_identifier,
+        relay_bot=None,
+        tls=True,
+    ):
         self.server = server
         self.port = port
         self.nickname = nickname
@@ -10,9 +21,17 @@ class IRCBot:
         self.relay_bot = relay_bot
         self.reader = None
         self.writer = None
+        self.tls = tls
 
     async def connect(self):
-        self.reader, self.writer = await asyncio.open_connection(self.server, self.port)
+        if self.tls:
+            self.reader, self.writer = await asyncio.open_connection(
+                self.server, self.port, ssl=ssl.create_default_context()
+            )
+        else:
+            self.reader, self.writer = await asyncio.open_connection(
+                self.server, self.port
+            )
         self.writer.write(f"NICK {self.nickname}\r\n".encode())
         self.writer.write(f"USER {self.nickname} 0 * :{self.nickname}\r\n".encode())
         await self.writer.drain()
@@ -58,9 +77,9 @@ class IRCBot:
                         await self.relay_bot.send_message(relay_message)
 
 async def main():
-    bot1 = IRCBot('irc.rizon.net', 6667, 'ii', '#computertech', 'R')
-    bot2 = IRCBot('irc.technet.chat', 6667, 'ii', '#computertech', 'T')
-    bot3 = IRCBot('irc.swiftirc.net', 6667, 'ii', '#computertech', 'S')
+    bot1 = IRCBot('irc.rizon.net', 6697, 'ii', '#computertech', 'R')
+    bot2 = IRCBot('irc.technet.chat', 6697, 'ii', '#computertech', 'T')
+    bot3 = IRCBot('irc.swiftirc.net', 6697, 'ii', '#computertech', 'S')
 
     bot1.relay_bot = bot2
     bot2.relay_bot = bot3
