@@ -1,6 +1,8 @@
 import asyncio
 import ssl
+import logging
 
+logging.basicConfig(level=logging.INFO)
 
 class IRCBot:
     def __init__(
@@ -12,6 +14,7 @@ class IRCBot:
         network_identifier,
         relay_bot=None,
         tls=True,
+        ignored_users=None,
     ):
         self.server = server
         self.port = port
@@ -22,6 +25,7 @@ class IRCBot:
         self.reader = None
         self.writer = None
         self.tls = tls
+        self.ignored_users = ignored_users if ignored_users else []
 
     async def connect(self):
         if self.tls:
@@ -35,14 +39,20 @@ class IRCBot:
         self.writer.write(f"NICK {self.nickname}\r\n".encode())
         self.writer.write(f"USER {self.nickname} 0 * :{self.nickname}\r\n".encode())
         await self.writer.drain()
+        logging.info(f"Connected to {self.server}:{self.port} as {self.nickname}")
+
+        # Join the channel after connection is established
+        await self.join_channel()
 
     async def join_channel(self):
         self.writer.write(f"JOIN {self.channel}\r\n".encode())
         await self.writer.drain()
+        logging.info(f"Joined channel {self.channel}")
 
     async def send_message(self, message, relay=True):
         self.writer.write(f"PRIVMSG {self.channel} :{message}\r\n".encode())
         await self.writer.drain()
+        logging.info(f"Sent message: {message}")
 
         if self.relay_bot and relay:
             # Only add network identifier if message is not a relayed message
@@ -50,65 +60,63 @@ class IRCBot:
                 message = f"[{self.network_identifier}] {message}"
             await self.relay_bot.send_message(message, relay=False)
 
+    def parse_message(self, message):
+        parts = message.split()
+        if not parts:
+            return None, None, []
+        source = parts[0][1:] if parts[0].startswith(':') else None
+        command = parts[1] if source else parts[0]
+        args_start = 2 if source else 1
+        args = []
+        trailing_arg_start = None
+        for i, part in enumerate(parts[args_start:], args_start):
+            if part.startswith(':'):
+                trailing_arg_start = i
+                break
+            else:
+                args.append(part)
+        if trailing_arg_start is not None:
+            args.append(' '.join(parts[trailing_arg_start:])[1:])
+        return source, command, args
+
     async def listen(self):
+        valid_colors = ["02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15"]
+        which_color = lambda nick: valid_colors[sum(ord(c) for c in nick) % len(valid_colors)]
+        color_nick = lambda nick: f"\u0003{which_color(nick)}{nick}\u0003"
+
         while True:
             line = await self.reader.readline()
             line = line.decode().strip()
+            logging.info(f"Received message: {line}")
 
-            if line.startswith("PING"):
-                response = "PONG :" + line.split(":")[1] + "\r\n"
+            source, command, args = self.parse_message(line)
+
+            if command == "PING":
+                response = "PONG :" + args[0] + "\r\n"
                 self.writer.write(response.encode())
                 await self.writer.drain()
-            else:
-                parts = line.split()
-                if len(parts) > 1 and parts[1].isdigit():
-                    numeric_reply = parts[1]
-                    if numeric_reply == '001':
-                        await self.join_channel()
-                elif (
-                    len(parts) > 2
-                    and parts[1] == "PRIVMSG"
-                    and parts[2] == self.channel
-                ):
-                    nick = parts[0].split("!")[0].lstrip(":")
-                    valid_colors = [
-                        "02",
-                        "03",
-                        "04",
-                        "05",
-                        "06",
-                        "07",
-                        "08",
-                        "09",
-                        "10",
-                        "11",
-                        "12",
-                        "13",
-                        "14",
-                        "15",
-                    ]
-                    which_color = lambda nick: valid_colors[
-                        sum(ord(c) for c in nick) % len(valid_colors)
-                    ]
-                    color_nick = lambda nick: f"\u0003{which_color(nick)}{nick}\u0003"
+                logging.info(f"Sent PONG response")
+            elif command == 'PRIVMSG' and args[0] == self.channel:
+                nick = source.split('!')[0]
+                if nick not in self.ignored_users:  # Check if the sender is ignored
                     colored_nick = color_nick(nick)
-                    message = " ".join(parts[3:]).lstrip(":")
-                    if message.startswith("\x01ACTION"):
+                    message = args[1]
+                    if message.startswith('\x01ACTION'):
                         message = message[8:-1]
-                        relay_message = (
-                            f"[{self.network_identifier}] * {colored_nick} {message}"
-                        )
+                        relay_message = f"[{self.network_identifier}] * {colored_nick} {message}"
                     else:
-                        relay_message = (
-                            f"[{self.network_identifier}] <{colored_nick}> {message}"
-                        )
+                        relay_message = f"[{self.network_identifier}] <{colored_nick}> {message}"
                     if self.relay_bot:
                         await self.relay_bot.send_message(relay_message)
+            elif command == 'INVITE' and args[0] == self.nickname:
+                channel = args[1]
+                if channel == self.channel:
+                    await self.join_channel()
 
 async def main():
-    bot1 = IRCBot('irc.rizon.net', 6697, 'ii', '#computertech', 'R')
-    bot2 = IRCBot('irc.technet.chat', 6697, 'ii', '#computertech', 'T')
-    bot3 = IRCBot('irc.swiftirc.net', 6697, 'ii', '#computertech', 'S')
+    bot1 = IRCBot('irc.rizon.net', 6697, 'ii', '#computertech', 'R', ignored_users=['user1', 'user2'])
+    bot2 = IRCBot('irc.technet.chat', 6697, 'ii', '#computertech', 'T', ignored_users=['user1', 'user2'])
+    bot3 = IRCBot('irc.swiftirc.net', 6697, 'ii', '#computertech', 'S', ignored_users=['user1', 'user2'])
 
     bot1.relay_bot = bot2
     bot2.relay_bot = bot3
