@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import ssl
-import time
 import yaml
 
 logging.basicConfig(level=logging.INFO)
