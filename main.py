@@ -14,7 +14,7 @@ class IRCBot:
         nickname,
         channel,
         network_identifier,
-        relay_bot=None,
+        relay_bots=[],
         tls=True,
     ):
         self.server = server
@@ -22,11 +22,10 @@ class IRCBot:
         self.nickname = nickname
         self.channel = channel
         self.network_identifier = network_identifier
-        self.relay_bot = relay_bot
+        self.relay_bots = relay_bots
         self.reader = None
         self.writer = None
         self.tls = tls
-        self.autojoined = False
 
     async def connect(self):
         if self.tls:
@@ -41,7 +40,6 @@ class IRCBot:
         self.writer.write(f"USER {self.nickname} 0 * :{self.nickname}\r\n".encode())
         await self.writer.drain()
         logging.info(f"Connected to {self.server}:{self.port} as {self.nickname}")
-        logging.info(f"Relaying to: {self.relay_bot.server}")
 
     async def join_channel(self):
         self.writer.write(f"JOIN {self.channel}\r\n".encode())
@@ -96,23 +94,25 @@ class IRCBot:
 
         while True:
             line = await self.reader.readline()
-            line = line.decode().strip()
-            logging.info(f"Received message: {line}")
+            try:
+                line = line.decode().strip()
+                logging.info(f"Received message: {line}")
+            except:
+                pass
             if not len(line):
                 break
 
             source, command, args = self.parse_message(line)
 
-            if command == "PING":
+            # Join the channel after connection is established
+            if command == "001":
+                await self.join_channel()
+            elif command == "PING":
                 response = "PONG :" + args[0] + "\r\n"
                 self.writer.write(response.encode())
                 await self.writer.drain()
                 logging.info(f"Sent PONG response")
 
-                # Join the channel after connection is established
-                if not self.autojoined:
-                    await self.join_channel()
-                    self.autojoined = True
             elif command == "PRIVMSG" and args[0] == self.channel:
                 nick = source.split("!")[0]
                 colored_nick = color_nick(nick)
@@ -126,8 +126,8 @@ class IRCBot:
                     relay_message = (
                         f"[{self.network_identifier}] <{colored_nick}> {message}"
                     )
-                if self.relay_bot:
-                    await self.relay_bot.send_message(relay_message)
+                for bot in self.relay_bots:
+                    await bot.send_message(relay_message)
             elif command == "INVITE" and args[0] == self.nickname:
                 self.channel = args[1]
                 await self.join_channel()
@@ -143,7 +143,9 @@ async def main():
 
     # Set up the relay bots
     for i in range(len(bots)):
-        bots[i].relay_bot = bots[(i + 1) % len(bots)]
+        bots[i].relay_bots = [
+            bot for bot in bots if bot.network_identifier != bots[i].network_identifier
+        ]
 
     # Connect and listen
     await asyncio.gather(*(bot.connect() for bot in bots))
