@@ -2,18 +2,18 @@ bots:
   - server: irc.rizon.net
     port: 6697
     nickname: brigid
-    channel: #computertech
+    channel: "#computertech"
     network_identifier: R
     ignored_users: ['user1', 'user2']
   - server: irc.technet.chat
     port: 6697
     nickname: brigid
-    channel: #computertech
+    channel: "#computertech"
     network_identifier: T
     ignored_users: ['user1', 'user2']
   - server: irc.swiftirc.net
     port: 6697
     nickname: brigid
-    channel: #computertech
+    channel: "#computertech"
     network_identifier: S
     ignored_users: ['user1', 'user2']
