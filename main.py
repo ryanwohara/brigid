@@ -52,8 +52,8 @@ class IRCBot:
         logging.info(f"Sent message: {message}")
 
     def parse_message(self, message):
-        parts = message.split()
-        if not parts:
+        parts = message.split(" ")
+        if not parts or not len(parts):
             return None, None, []
         source = parts[0][1:] if parts[0].startswith(":") else None
         command = parts[1] if source else parts[0]
@@ -93,11 +93,12 @@ class IRCBot:
         color_nick = lambda nick: f"\u0003{which_color(nick)}{nick}\u0003"
 
         while True:
-            line = await self.reader.readline()
+            b = await self.reader.readline()
             try:
-                line = line.decode().strip()
+                line = b.decode('utf-8').strip()
                 logging.info(f"Received message: {line}")
             except:
+                logging.warn(f"Error decoding message")
                 pass
             if not len(line):
                 break
