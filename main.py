@@ -49,11 +49,12 @@ class IRCBot:
         logging.info(f"Joined channel {self.channel}")
 
     async def identify(self):
+        self.writer.write(f"MODE {self.nickname} +B\r\n".encode())
         if self.nickserv_password:
             password = self.nickserv_password
             self.writer.write(f"PRIVMSG NickServ :id {password}\r\n".encode())
-            await self.writer.drain()
-            logging.info("NickServ password submitted")
+        await self.writer.drain()
+        logging.info("Registered as a bot user")
 
     async def send_message(self, message, relay=True):
         self.writer.write(f"PRIVMSG {self.channel} :{message}\r\n".encode())
