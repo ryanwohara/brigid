@@ -16,6 +16,7 @@ class IRCBot:
         network_identifier,
         relay_bots=[],
         tls=True,
+        nickserv_password=None,
     ):
         self.server = server
         self.port = port
@@ -26,6 +27,7 @@ class IRCBot:
         self.reader = None
         self.writer = None
         self.tls = tls
+        self.nickserv_password = nickserv_password
 
     async def connect(self):
         if self.tls:
@@ -45,6 +47,13 @@ class IRCBot:
         self.writer.write(f"JOIN {self.channel}\r\n".encode())
         await self.writer.drain()
         logging.info(f"Joined channel {self.channel}")
+
+    async def identify(self):
+        if self.nickserv_password:
+            password = self.nickserv_password
+            self.writer.write(f"PRIVMSG NickServ :id {password}\r\n".encode())
+            await self.writer.drain()
+            logging.info("NickServ password submitted")
 
     async def send_message(self, message, relay=True):
         self.writer.write(f"PRIVMSG {self.channel} :{message}\r\n".encode())
@@ -107,6 +116,7 @@ class IRCBot:
 
             # Join the channel after connection is established
             if command == "001":
+                await self.identify()
                 await self.join_channel()
             elif command == "PING":
                 response = "PONG :" + args[0] + "\r\n"
