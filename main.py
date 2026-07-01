@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import logging
 import ssl
 import yaml
@@ -38,6 +39,10 @@ class IRCBot:
             self.reader, self.writer = await asyncio.open_connection(
                 self.server, self.port
             )
+        # Begin capability negotiation before registering so SASL can complete
+        # (and identify us to services) before the welcome burst / auto-join.
+        if self.nickserv_password:
+            self.writer.write("CAP LS\r\n".encode())
         self.writer.write(f"NICK {self.nickname}\r\n".encode())
         self.writer.write(f"USER {self.nickname} 0 * :{self.nickname}\r\n".encode())
         await self.writer.drain()
@@ -48,13 +53,29 @@ class IRCBot:
         await self.writer.drain()
         logging.info(f"Joined channel {self.channel}")
 
-    async def identify(self):
+    async def register_as_bot(self):
         self.writer.write(f"MODE {self.nickname} +B\r\n".encode())
-        if self.nickserv_password:
-            password = self.nickserv_password
-            self.writer.write(f"PRIVMSG NickServ :id {password}\r\n".encode())
         await self.writer.drain()
         logging.info("Registered as a bot user")
+
+    async def request_sasl(self):
+        self.writer.write("CAP REQ :sasl\r\n".encode())
+        await self.writer.drain()
+
+    async def start_sasl(self):
+        self.writer.write("AUTHENTICATE PLAIN\r\n".encode())
+        await self.writer.drain()
+
+    async def send_sasl_credentials(self):
+        # SASL PLAIN: base64(authzid \0 authcid \0 password); authzid left empty.
+        payload = f"\x00{self.nickname}\x00{self.nickserv_password}".encode()
+        token = base64.b64encode(payload).decode()
+        self.writer.write(f"AUTHENTICATE {token}\r\n".encode())
+        await self.writer.drain()
+
+    async def end_cap(self):
+        self.writer.write("CAP END\r\n".encode())
+        await self.writer.drain()
 
     async def send_message(self, message, relay=True):
         self.writer.write(f"PRIVMSG {self.channel} :{message}\r\n".encode())
@@ -115,9 +136,40 @@ class IRCBot:
 
             source, command, args = self.parse_message(line)
 
-            # Join the channel after connection is established
-            if command == "001":
-                await self.identify()
+            # SASL capability negotiation (only when a password is configured).
+            if command == "CAP" and len(args) >= 2:
+                subcommand = args[1]
+                caps = args[-1].split()
+                if subcommand == "LS":
+                    if "sasl" in caps:
+                        await self.request_sasl()
+                    else:
+                        logging.warning(
+                            "SASL not offered by server; connecting without identifying"
+                        )
+                        await self.end_cap()
+                elif subcommand == "ACK" and "sasl" in caps:
+                    await self.start_sasl()
+                elif subcommand == "NAK":
+                    logging.warning(
+                        "SASL capability refused; connecting without identifying"
+                    )
+                    await self.end_cap()
+            elif command == "AUTHENTICATE" and args and args[0] == "+":
+                await self.send_sasl_credentials()
+            elif command == "903":  # RPL_SASLSUCCESS
+                logging.info("SASL authentication successful")
+                await self.end_cap()
+            elif command in ("902", "904", "905", "906", "907"):  # SASL failed/aborted
+                logging.error(
+                    f"SASL authentication failed ({command}); "
+                    "connecting without identifying"
+                )
+                await self.end_cap()
+            # Register + join once fully connected. With SASL this arrives only
+            # after authentication, so we are identified before joining.
+            elif command == "001":
+                await self.register_as_bot()
                 await self.join_channel()
             elif command == "PING":
                 response = "PONG :" + args[0] + "\r\n"
